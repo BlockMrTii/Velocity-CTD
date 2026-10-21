@@ -111,6 +111,10 @@ jobs:
 
           > ⚠️ The fatjar will be removed soon — please migrate to the bootstrap jar.
 
+          ## Required plugin for the seamless server switch
+
+          The seamless server switch (`seamless-switch` in `velocity.toml`) needs the **[FixedEntityId](https://github.com/offiziellnorthsoft/FixedEntityId/releases/latest)** plugin on **every** backend server. Without it the normal switch with the "Loading terrain" screen is used.
+
           ---
         files: |
           proxy/build/libs/velocity-ctd-fatjar-*-${{ steps.release_tag.outputs.build_nr }}.jar

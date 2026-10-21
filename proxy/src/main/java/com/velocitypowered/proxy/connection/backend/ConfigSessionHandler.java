@@ -55,6 +55,7 @@ import com.velocitypowered.proxy.protocol.packet.config.ClientboundCustomReportD
 import com.velocitypowered.proxy.protocol.packet.config.ClientboundServerLinksPacket;
 import com.velocitypowered.proxy.protocol.packet.config.CodeOfConductPacket;
 import com.velocitypowered.proxy.protocol.packet.config.FinishedUpdatePacket;
+import com.velocitypowered.proxy.protocol.packet.config.KnownPacksPacket;
 import com.velocitypowered.proxy.protocol.packet.config.RegistrySyncPacket;
 import com.velocitypowered.proxy.protocol.packet.config.StartUpdatePacket;
 import com.velocitypowered.proxy.protocol.packet.config.TagsUpdatePacket;
@@ -101,6 +102,13 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
   private boolean backendAdvancedToPlay;
 
   /**
+   * If true, the client stays in the PLAY state while this backend goes through its
+   * configuration phase. The proxy then answers the backend itself and discards the registry
+   * data, tags and similar packets instead of forwarding them to the client.
+   */
+  private final boolean silent;
+
+  /**
    * Creates the new transition handler.
    *
    * @param server       the Velocity server instance
@@ -109,15 +117,32 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
    */
   ConfigSessionHandler(VelocityServer server, VelocityServerConnection serverConn,
                        CompletableFuture<Impl> resultFuture) {
+    this(server, serverConn, resultFuture, false);
+  }
+
+  /**
+   * Creates the new transition handler.
+   *
+   * @param server       the Velocity server instance
+   * @param serverConn   the server connection
+   * @param resultFuture the result future
+   * @param silent       whether the client stays in PLAY and the config phase is absorbed
+   */
+  ConfigSessionHandler(VelocityServer server, VelocityServerConnection serverConn,
+                       CompletableFuture<Impl> resultFuture, boolean silent) {
     this.server = server;
     this.serverConn = serverConn;
     this.resultFuture = resultFuture;
+    this.silent = silent;
     this.state = State.START;
   }
 
   @Override
   public void activated() {
     backendAdvancedToPlay = false;
+    if (silent) {
+      return;
+    }
     ConnectedPlayer player = serverConn.getPlayer();
     if (player.getProtocolVersion() == ProtocolVersion.MINECRAFT_1_20_2) {
       resourcePackToApply = player.resourcePackHandler().getFirstAppliedPack();
@@ -143,24 +168,49 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(TagsUpdatePacket packet) {
+    if (silent) {
+      return true;
+    }
     serverConn.getPlayer().getConnection().write(packet);
     return true;
   }
 
   @Override
   public boolean handle(ClientboundCustomReportDetailsPacket packet) {
+    if (silent) {
+      return true;
+    }
     serverConn.getPlayer().getConnection().write(packet);
     return true;
   }
 
   @Override
   public boolean handle(ClientboundServerLinksPacket packet) {
+    if (silent) {
+      return true;
+    }
     serverConn.getPlayer().getConnection().write(packet);
     return true;
   }
 
   @Override
+  public boolean handle(KnownPacksPacket packet) {
+    if (silent) {
+      // The client is not in the config state, so answer for it. Claiming that no packs are known
+      // makes the backend send the full registry data, which we discard.
+      serverConn.ensureConnected().write(KnownPacksPacket.empty());
+      return true;
+    }
+    return false; // forward to the client
+  }
+
+  @Override
   public boolean handle(KeepAlivePacket packet) {
+    if (silent) {
+      // Keep the backend connection alive ourselves, the client has its own keepalive in PLAY.
+      serverConn.ensureConnected().write(packet);
+      return true;
+    }
     serverConn.getPendingPings().put(packet.getRandomId(), System.nanoTime());
     serverConn.getPlayer().getConnection().write(packet);
     return true;
@@ -252,6 +302,12 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
   public boolean handle(FinishedUpdatePacket packet) {
     final MinecraftConnection smc = serverConn.ensureConnected();
     final ConnectedPlayer player = serverConn.getPlayer();
+    if (silent) {
+      // The client never left PLAY, so there is nobody to wait for. Finish the backend's config
+      // phase and let the transition handler deal with JoinGame.
+      advanceBackendToPlay(false);
+      return true;
+    }
     final ClientConfigSessionHandler configHandler = (ClientConfigSessionHandler) player.getConnection().getActiveSessionHandler();
 
     // Start client-side configuration; may hold the player to apply a resource pack.
@@ -305,6 +361,9 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(PluginMessagePacket packet) {
+    if (silent) {
+      return true;
+    }
     if (PluginMessageUtil.isMcBrand(packet)) {
       serverConn.getPlayer().getConnection().write(PluginMessageUtil.rewriteMinecraftBrand(packet,
           server.getVersion(),
@@ -344,6 +403,9 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(RegistrySyncPacket packet) {
+    if (silent) {
+      return true;
+    }
     serverConn.getPlayer().getConnection().write(packet.retain());
     return true;
   }
@@ -408,6 +470,9 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(CodeOfConductPacket packet) {
+    if (silent) {
+      return true;
+    }
     this.serverConn.getPlayer().getConnection().write(packet.retain());
     return true;
   }
@@ -471,6 +536,11 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public void handleGeneric(MinecraftPacket packet) {
+    if (silent) {
+      // Config packets without a dedicated handler (e.g. feature flags) are not meant for a
+      // client that is in PLAY. Drop them.
+      return;
+    }
     serverConn.getPlayer().getConnection().write(packet);
   }
 

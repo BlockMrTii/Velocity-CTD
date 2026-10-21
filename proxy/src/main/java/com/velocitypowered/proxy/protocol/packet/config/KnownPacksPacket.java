@@ -33,6 +33,18 @@ public class KnownPacksPacket implements MinecraftPacket {
 
   private List<KnownPack> packs;
 
+  /**
+   * Creates a response that tells the backend the client knows no packs, so that the backend
+   * sends the complete registry data. Used when the proxy answers on behalf of the client.
+   *
+   * @return a known packs packet with an empty pack list
+   */
+  public static KnownPacksPacket empty() {
+    final KnownPacksPacket packet = new KnownPacksPacket();
+    packet.packs = List.of();
+    return packet;
+  }
+
   @Override
   public void decode(ByteBuf buf, ProtocolUtils.Direction direction, ProtocolVersion protocolVersion) {
     int packCount = ProtocolUtils.readVarInt(buf);

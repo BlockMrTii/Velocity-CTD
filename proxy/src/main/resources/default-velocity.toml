@@ -432,6 +432,21 @@ ignore-anonymous-player-request = false
 # more than one section.
 pool-players-across-sections = false
 
+# Keeps the client in the play state when switching servers, so it never sees the "Reconfiguring"
+# screen. The proxy takes over the configuration phase of the new server itself. This only works
+# correctly if all backends use identical registries, tags and resource packs.
+skip-config-on-switch = true
+
+# Switches into the same world (same name and dimension type) without the "Loading terrain" screen.
+# The proxy removes the old server's entities and chunks itself instead of sending a respawn.
+# Needs skip-config-on-switch, Minecraft 26.3 clients and the FixedEntityId plugin on every backend;
+# otherwise the normal switch is used.
+seamless-switch = true
+
+# Whether a seamless switch removes the old server's chunks right away. If false, they stay
+# visible until the new server overwrites them, which avoids an empty world while it loads.
+seamless-switch-forget-chunks = true
+
 [slash-servers]
 # Defines "/<name>" aliases for servers - here "/faction" and "/factions" would both send you to the server named
 # "factions", for example.

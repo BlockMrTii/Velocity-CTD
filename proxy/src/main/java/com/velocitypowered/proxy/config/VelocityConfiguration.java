@@ -930,6 +930,18 @@ public final class VelocityConfiguration implements ProxyConfig {
     return advanced.isPoolPlayersAcrossSections();
   }
 
+  public boolean isSkipConfigOnSwitch() {
+    return advanced.isSkipConfigOnSwitch();
+  }
+
+  public boolean isSeamlessSwitch() {
+    return advanced.isSeamlessSwitch();
+  }
+
+  public boolean isSeamlessSwitchForgetChunks() {
+    return advanced.isSeamlessSwitchForgetChunks();
+  }
+
   /**
    * Gets the dynamic fallback filter mode configured for server selection.
    *
@@ -2323,6 +2335,12 @@ public final class VelocityConfiguration implements ProxyConfig {
      */
     @Expose
     private boolean poolPlayersAcrossSections = false;
+    @Expose
+    private boolean skipConfigOnSwitch = true;
+    @Expose
+    private boolean seamlessSwitch = true;
+    @Expose
+    private boolean seamlessSwitchForgetChunks = true;
 
     private Advanced() {
     }
@@ -2364,6 +2382,9 @@ public final class VelocityConfiguration implements ProxyConfig {
         this.backendBrandCustom = config.getOrElse("custom-brand-backend", "Paper");
         this.ignoreAnonymousPlayerRequest = config.getOrElse("ignore-anonymous-player-request", false);
         this.poolPlayersAcrossSections = config.getOrElse("pool-players-across-sections", false);
+        this.skipConfigOnSwitch = config.getOrElse("skip-config-on-switch", true);
+        this.seamlessSwitch = config.getOrElse("seamless-switch", true);
+        this.seamlessSwitchForgetChunks = config.getOrElse("seamless-switch-forget-chunks", true);
       }
     }
 
@@ -2483,6 +2504,18 @@ public final class VelocityConfiguration implements ProxyConfig {
       return poolPlayersAcrossSections;
     }
 
+    public boolean isSkipConfigOnSwitch() {
+      return skipConfigOnSwitch;
+    }
+
+    public boolean isSeamlessSwitch() {
+      return seamlessSwitch;
+    }
+
+    public boolean isSeamlessSwitchForgetChunks() {
+      return seamlessSwitchForgetChunks;
+    }
+
     @Override
     public String toString() {
       return MoreObjects.toStringHelper(this)
@@ -2514,6 +2547,9 @@ public final class VelocityConfiguration implements ProxyConfig {
           .add("backendBrandCustom", backendBrandCustom)
           .add("ignoreAnonymousPlayerRequest", ignoreAnonymousPlayerRequest)
           .add("poolPlayersAcrossSections", poolPlayersAcrossSections)
+          .add("skipConfigOnSwitch", skipConfigOnSwitch)
+          .add("seamlessSwitch", seamlessSwitch)
+          .add("seamlessSwitchForgetChunks", seamlessSwitchForgetChunks)
           .toString();
     }
 

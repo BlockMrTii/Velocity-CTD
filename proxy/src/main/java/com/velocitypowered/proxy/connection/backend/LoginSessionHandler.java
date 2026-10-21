@@ -176,12 +176,21 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
       smc.setActiveSessionHandler(StateRegistry.PLAY, new TransitionSessionHandler(server, serverConn, resultFuture));
     } else {
       smc.write(new LoginAcknowledgedPacket());
-      smc.setActiveSessionHandler(StateRegistry.CONFIG, new ConfigSessionHandler(server, serverConn, resultFuture));
       ConnectedPlayer player = serverConn.getPlayer();
+      final boolean switching =
+          player.getConnection().getActiveSessionHandler() instanceof ClientPlaySessionHandler;
+      // When switching, the client can stay in PLAY if the proxy absorbs the backend's config phase.
+      final boolean silent = switching && server.getConfiguration().isSkipConfigOnSwitch();
+      smc.setActiveSessionHandler(StateRegistry.CONFIG,
+          new ConfigSessionHandler(server, serverConn, resultFuture, silent));
       if (player.getClientSettingsPacket() != null) {
         smc.write(player.getClientSettingsPacket());
       }
-      if (player.getConnection().getActiveSessionHandler() instanceof ClientPlaySessionHandler clientPlaySessionHandler) {
+      if (silent) {
+        // Nothing to do: the client is not sent into the config state. The backend's config
+        // phase is answered by ConfigSessionHandler and the client receives JoinGame + Respawn.
+        return true;
+      } else if (player.getConnection().getActiveSessionHandler() instanceof ClientPlaySessionHandler clientPlaySessionHandler) {
         smc.setAutoReading(false);
         clientPlaySessionHandler.doSwitch().thenRunAsync(() -> smc.setAutoReading(true), smc.eventLoop());
       } else {
