@@ -73,6 +73,10 @@ public class RespawnPacket implements MinecraftPacket {
         joinGame.getPortalCooldown(), joinGame.getSeaLevel());
   }
 
+  public DimensionInfo getDimensionInfo() {
+    return dimensionInfo;
+  }
+
   public int getDimension() {
     return dimension;
   }

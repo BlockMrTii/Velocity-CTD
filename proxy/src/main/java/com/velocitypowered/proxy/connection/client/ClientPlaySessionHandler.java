@@ -40,6 +40,7 @@ import com.velocitypowered.proxy.connection.backend.BackendConnectionPhases;
 import com.velocitypowered.proxy.connection.backend.BungeeCordMessageResponder;
 import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
 import com.velocitypowered.proxy.connection.player.resourcepack.ResourcePackResponseBundle;
+import com.velocitypowered.proxy.connection.registry.DimensionInfo;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
@@ -119,6 +120,14 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
   private final ConnectedPlayer player;
   private boolean spawned = false;
   private final List<UUID> serverBossBars = new ArrayList<>();
+
+  private final ClientWorldTracker worldTracker = new ClientWorldTracker();
+
+  /**
+   * The level the client is currently in (level key and dimension type), if known. The key alone is
+   * not enough: the main world of a standalone end server is also called minecraft:overworld.
+   */
+  private volatile @Nullable String currentLevel;
   private final Queue<PluginMessagePacket> loginPluginMessages = new ConcurrentLinkedQueue<>();
   private final AtomicLong loginPluginMessagesBytes = new AtomicLong();
   private final AtomicInteger loginPluginMessagesCount = new AtomicInteger();
@@ -669,12 +678,16 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
    */
   public void handleBackendJoinGame(JoinGamePacket joinGame, VelocityServerConnection destination) {
     final MinecraftConnection serverMc = destination.ensureConnected();
+    // If the client is already spawned here, this is a switch that skipped the config state, so
+    // nothing has cleared the client's state (e.g. boss bars) for us.
+    final boolean wasSpawned = spawned;
 
     if (!spawned) {
       // The player wasn't spawned in yet, so we don't need to do anything special. Just send
       // JoinGame.
       spawned = true;
       player.getConnection().delayedWrite(joinGame);
+      worldTracker.reset(joinGame.getEntityId());
       // Required for Legacy Forge
       player.getPhase().onFirstJoin(player);
     } else {
@@ -686,12 +699,23 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       if (player.getConnection().getType() == ConnectionTypes.LEGACY_FORGE) {
         this.doSafeClientServerSwitch(joinGame);
       } else {
-        this.doFastClientServerSwitch(joinGame);
+        if (canSwitchSeamlessly(joinGame)) {
+          worldTracker.switchServer(player.getConnection(), serverMc, joinGame,
+              server.getConfiguration().isSeamlessSwitchForgetChunks());
+        } else {
+          // The config phase was skipped, so the old scoreboard is still on the client.
+          worldTracker.clearScoreboard(player.getConnection());
+          this.doFastClientServerSwitch(joinGame);
+          worldTracker.reset(joinGame.getEntityId());
+        }
       }
     }
 
+    // Remember the level the client is in now, so the next switch can compare against it.
+    this.currentLevel = levelOf(joinGame.getDimension(), joinGame.getDimensionInfo());
+
     destination.setEntityId(joinGame.getEntityId()); // used for sound api
-    if (player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_2)) {
+    if (player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_2) && !wasSpawned) {
       player.getBossBarManager().sendBossBars();
     } else {
       // Remove previous boss bars. These don't get cleared when sending JoinGame (up until 1.20.2),
@@ -725,8 +749,9 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
     loginPluginMessagesBytes.set(0);
     loginPluginMessagesCount.set(0);
 
-    // Clear any title from the previous server.
-    if (player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_8)) {
+    // Clear any title from the previous server. Not when the config phase was skipped, so that a
+    // title used as a transition (e.g. a fade to black) keeps running across the switch.
+    if (!wasSpawned && player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_8)) {
       player.getConnection().delayedWrite(
           GenericTitlePacket.constructTitlePacket(GenericTitlePacket.ActionType.RESET,
               player.getProtocolVersion()));
@@ -736,6 +761,50 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
     player.getConnection().flush();
     serverMc.flush();
     destination.completeJoin();
+  }
+
+  /**
+   * Updates the level the client is in. Called when a backend sends a Respawn packet itself, for
+   * example for a plugin-driven dimension change.
+   *
+   * @param respawn the Respawn packet
+   */
+  public void setCurrentLevel(RespawnPacket respawn) {
+    this.currentLevel = levelOf(respawn.getDimension(), respawn.getDimensionInfo());
+  }
+
+  private static @Nullable String levelOf(int dimensionType, @Nullable DimensionInfo info) {
+    if (info == null || info.getLevelName() == null) {
+      return null;
+    }
+    return info.getLevelName() + " (dimension type " + dimensionType + ")";
+  }
+
+  public ClientWorldTracker getWorldTracker() {
+    return worldTracker;
+  }
+
+  private boolean canSwitchSeamlessly(JoinGamePacket joinGame) {
+    // The client must still be in PLAY (config phase skipped), or it expects a JoinGame.
+    if (!server.getConfiguration().isSeamlessSwitch()
+        || !server.getConfiguration().isSkipConfigOnSwitch()
+        || !ClientWorldTracker.supports(player.getProtocolVersion())) {
+      return false;
+    }
+    final String targetLevel = levelOf(joinGame.getDimension(), joinGame.getDimensionInfo());
+    final String reason;
+    if (targetLevel == null || !targetLevel.equals(currentLevel)) {
+      reason = "level differs (" + currentLevel + " -> " + targetLevel + ")";
+    } else if (joinGame.getEntityId() != worldTracker.getPlayerEntityId()) {
+      // The client keeps its player entity ID; packets for the new one would hit other entities.
+      reason = "player entity ID differs (" + worldTracker.getPlayerEntityId() + " -> "
+          + joinGame.getEntityId() + "), is FixedEntityId installed on all backends?";
+    } else {
+      reason = null;
+    }
+    LOGGER.info("Seamless switch for {}: {}", player.getUsername(),
+        reason == null ? "used" : "not used, " + reason);
+    return reason == null;
   }
 
   private void doFastClientServerSwitch(JoinGamePacket joinGame) {

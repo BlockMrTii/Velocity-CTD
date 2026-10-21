@@ -29,6 +29,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.codec.CorruptedFrameException;
+import java.util.function.Consumer;
 import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.Nullable;
 
@@ -45,6 +46,7 @@ public class MinecraftDecoder extends ChannelInboundHandlerAdapter {
   private final ProtocolUtils.Direction direction;
   private StateRegistry state;
   private StateRegistry.PacketRegistry.ProtocolRegistry registry;
+  private @Nullable Consumer<ByteBuf> playPacketObserver;
   private @Nullable StateRegistry awaitedState;
   private int awaitedFirstPacketId;
 
@@ -87,6 +89,9 @@ public class MinecraftDecoder extends ChannelInboundHandlerAdapter {
         return;
       }
     }
+    if (playPacketObserver != null && state == StateRegistry.PLAY) {
+      playPacketObserver.accept(buf.duplicate().readerIndex(originalReaderIndex));
+    }
     MinecraftPacket packet = this.registry.createPacket(packetId);
     if (packet == null) {
       buf.readerIndex(originalReaderIndex);
@@ -114,6 +119,16 @@ public class MinecraftDecoder extends ChannelInboundHandlerAdapter {
       }
       ctx.fireChannelRead(packet);
     }
+  }
+
+  /**
+   * Sets a callback that sees every PLAY packet before it is decoded, starting with its ID. It must
+   * not modify or retain the buffer.
+   *
+   * @param observer the callback, or null to remove it
+   */
+  public void setPlayPacketObserver(@Nullable Consumer<ByteBuf> observer) {
+    this.playPacketObserver = observer;
   }
 
   private void doLengthSanityChecks(ByteBuf buf, MinecraftPacket packet) throws Exception {

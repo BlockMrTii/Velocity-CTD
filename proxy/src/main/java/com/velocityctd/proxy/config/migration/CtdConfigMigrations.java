@@ -233,6 +233,27 @@ public class CtdConfigMigrations {
             "advanced.pool-players-across-sections",
             false
         ),
+        migration(
+            "Keeps the client in the play state when switching servers, so it never sees the \"Reconfiguring\"\n"
+                + " screen. The proxy takes over the configuration phase of the new server itself. This only works\n"
+                + " correctly if all backends use identical registries, tags and resource packs.",
+            "advanced.skip-config-on-switch",
+            true
+        ),
+        migration(
+            "Switches into the same world (same name and dimension type) without the \"Loading terrain\" screen.\n"
+                + " The proxy removes the old server's entities and chunks itself instead of sending a respawn.\n"
+                + " Needs skip-config-on-switch, Minecraft 26.3 clients and the FixedEntityId plugin on every backend;\n"
+                + " otherwise the normal switch is used.",
+            "advanced.seamless-switch",
+            true
+        ),
+        migration(
+            "Whether a seamless switch removes the old server's chunks right away. If false, they stay\n"
+                + " visible until the new server overwrites them, which avoids an empty world while it loads.",
+            "advanced.seamless-switch-forget-chunks",
+            true
+        ),
 
         // [redis]
         migration(
