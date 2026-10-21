@@ -86,6 +86,24 @@ dependencies, useful performance improvements, and more.
   with our changes.
 * And much, much more... Try it out and see what we have to offer for yourself!
 
+## Seamless Server Switch
+
+Switching servers shows neither the "Reconfiguring" screen nor, when the target server uses the
+same world (same name and dimension type), the "Loading terrain" screen. Both can be turned off in
+the `[advanced]` section of `velocity.toml`:
+
+* `skip-config-on-switch` (default `true`): keeps the client in the play state, so there is no
+  "Reconfiguring" screen. All backends must use identical registries, tags and resource packs.
+* `seamless-switch` (default `true`): no "Loading terrain" screen when switching into the same
+  world. Needs `skip-config-on-switch` and Minecraft 26.3 clients.
+* `seamless-switch-forget-chunks` (default `true`): removes the old server's chunks on a seamless
+  switch. If `false`, they stay visible until the new server overwrites them.
+
+> [!IMPORTANT]
+> `seamless-switch` needs the **[FixedEntityId](https://github.com/offiziellnorthsoft/FixedEntityId)**
+> plugin on **every** backend server. Without it the normal switch with the "Loading terrain"
+> screen is used.
+
 ## Velocity-CTD Permissions
 * `velocity.command.alert` [/alert] (Allows you to display public alerts
   to all users on the proxy or proxies, depending on your setup).
