@@ -17,7 +17,6 @@
 
 package com.velocitypowered.proxy.connection.backend;
 
-import com.velocitypowered.api.event.player.CookieRequestEvent;
 import com.velocitypowered.api.event.player.ServerLoginPluginMessageEvent;
 import com.velocitypowered.api.event.player.configuration.PlayerEnteredConfigurationEvent;
 import com.velocitypowered.api.network.ProtocolVersion;
@@ -50,7 +49,6 @@ import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import org.apache.logging.log4j.LogManager;
 
@@ -209,16 +207,7 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(ClientboundCookieRequestPacket packet) {
-    server.getEventManager().fire(new CookieRequestEvent(serverConn.getPlayer(), packet.getKey()))
-        .thenAcceptAsync(event -> {
-          if (event.getResult().isAllowed()) {
-            final Key resultedKey = event.getResult().getKey() == null
-                ? event.getOriginalKey() : event.getResult().getKey();
-
-            serverConn.getPlayer().getConnection().write(new ClientboundCookieRequestPacket(resultedKey));
-          }
-        }, serverConn.ensureConnected().eventLoop());
-
+    serverConn.getPlayer().requestCookie(packet.getKey(), serverConn.ensureConnected());
     return true;
   }
 

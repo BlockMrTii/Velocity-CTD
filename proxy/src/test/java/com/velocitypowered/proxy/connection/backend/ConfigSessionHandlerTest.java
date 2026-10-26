@@ -21,8 +21,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.common.collect.ImmutableSet;
@@ -38,7 +40,9 @@ import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
 import com.velocitypowered.proxy.protocol.netty.MinecraftEncoder;
+import com.velocitypowered.proxy.protocol.packet.ClientboundCookieRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.JoinGamePacket;
+import com.velocitypowered.proxy.protocol.packet.PingIdentifyPacket;
 import com.velocitypowered.proxy.protocol.packet.chat.ChatAcknowledgementPacket;
 import com.velocitypowered.proxy.protocol.packet.config.FinishedUpdatePacket;
 import com.velocitypowered.proxy.tablist.InternalTabList;
@@ -57,6 +61,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -156,6 +161,55 @@ class ConfigSessionHandlerTest {
     verify(playerConnection).write(resetChat);
     assertEquals(2, resetChat.refCnt(), "retained for the write");
     resetChat.release(resetChat.refCnt());
+  }
+
+  @Test
+  void silentConfigurationDoesNotSendRawConfigPacketIdsToPlayClient() {
+    MinecraftConnection client = mock(MinecraftConnection.class);
+    ConnectedPlayer player = mock(ConnectedPlayer.class);
+    when(player.getConnection()).thenReturn(client);
+    VelocityServerConnection backend = mock(VelocityServerConnection.class);
+    when(backend.getPlayer()).thenReturn(player);
+    ConfigSessionHandler handler = new ConfigSessionHandler(mock(VelocityServer.class), backend,
+        new CompletableFuture<>(), true);
+    ByteBuf raw = Unpooled.buffer().writeByte(0x06);
+    try {
+      handler.handleUnknown(raw);
+      verifyNoInteractions(client);
+      assertEquals(1, raw.refCnt(), "not retained when discarded");
+    } finally {
+      raw.release();
+    }
+  }
+
+  @Test
+  void silentConfigurationAnswersBackendPingsWithoutThePlayClient() {
+    ConnectedPlayer player = mock(ConnectedPlayer.class);
+    VelocityServerConnection backend = mock(VelocityServerConnection.class);
+    MinecraftConnection connection = mock(MinecraftConnection.class);
+    when(backend.ensureConnected()).thenReturn(connection);
+    when(backend.getPlayer()).thenReturn(player);
+    ConfigSessionHandler handler = new ConfigSessionHandler(mock(VelocityServer.class), backend,
+        new CompletableFuture<>(), true);
+    PingIdentifyPacket ping = new PingIdentifyPacket();
+    assertTrue(handler.handle(ping));
+    verify(connection).write(ping);
+    verifyNoInteractions(player);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"true", "false"})
+  void cookieQueriesRetainTheirConfiguringBackendEvenIfTheClientStaysInPlay(boolean silent) {
+    ConnectedPlayer player = mock(ConnectedPlayer.class);
+    VelocityServerConnection backend = mock(VelocityServerConnection.class);
+    MinecraftConnection connection = mock(MinecraftConnection.class);
+    when(backend.ensureConnected()).thenReturn(connection);
+    when(backend.getPlayer()).thenReturn(player);
+    ConfigSessionHandler handler = new ConfigSessionHandler(mock(VelocityServer.class), backend,
+        new CompletableFuture<>(), silent);
+    Key key = Key.key("test", "cookie");
+    assertTrue(handler.handle(new ClientboundCookieRequestPacket(key)));
+    verify(player).requestCookie(key, connection);
   }
 
   private static int configPacketId(MinecraftPacket packet) {
