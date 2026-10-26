@@ -24,7 +24,10 @@ import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelPromise;
 import io.netty.handler.codec.MessageToByteEncoder;
+import java.util.function.Consumer;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * Encodes {@link MinecraftPacket} instances.
@@ -33,6 +36,7 @@ public class MinecraftEncoder extends MessageToByteEncoder<MinecraftPacket> {
 
   private final ProtocolUtils.Direction direction;
   private StateRegistry state;
+  private @Nullable Consumer<ByteBuf> packetObserver;
   private StateRegistry.PacketRegistry.ProtocolRegistry registry;
 
   /**
@@ -49,9 +53,36 @@ public class MinecraftEncoder extends MessageToByteEncoder<MinecraftPacket> {
 
   @Override
   protected void encode(ChannelHandlerContext ctx, MinecraftPacket msg, ByteBuf out) {
+    int start = out.writerIndex();
     int packetId = this.registry.getPacketId(msg);
     ProtocolUtils.writeVarInt(out, packetId);
     msg.encode(out, direction, registry.version);
+    if (packetObserver != null && state == StateRegistry.PLAY) {
+      packetObserver.accept(out.duplicate().readerIndex(start));
+    }
+  }
+
+  /**
+   * Tracks PLAY packets actually written to the client, including raw plugin packets.
+   *
+   * @param observer callback that must not modify or retain the buffer, or null to disable
+   */
+  public void setPlayPacketObserver(@Nullable Consumer<ByteBuf> observer) {
+    this.packetObserver = observer;
+  }
+
+  @Override
+  public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+    if (msg instanceof ByteBuf raw && packetObserver != null && state == StateRegistry.PLAY) {
+      try {
+        packetObserver.accept(raw.duplicate());
+      } catch (RuntimeException exception) {
+        raw.release();
+        promise.tryFailure(exception);
+        return;
+      }
+    }
+    super.write(ctx, msg, promise);
   }
 
   @Override
