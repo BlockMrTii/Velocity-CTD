@@ -39,7 +39,6 @@ import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.event.command.PlayerAvailableCommandsEvent;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.connection.PreTransferEvent;
-import com.velocitypowered.api.event.player.CookieRequestEvent;
 import com.velocitypowered.api.event.player.CookieStoreEvent;
 import com.velocitypowered.api.event.player.KickedFromServerEvent;
 import com.velocitypowered.api.event.player.KickedFromServerEvent.DisconnectPlayer;
@@ -94,7 +93,6 @@ import com.velocitypowered.proxy.protocol.netty.MinecraftEncoder;
 import com.velocitypowered.proxy.protocol.packet.AvailableCommandsPacket;
 import com.velocitypowered.proxy.protocol.packet.BundleDelimiterPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientSettingsPacket;
-import com.velocitypowered.proxy.protocol.packet.ClientboundCookieRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientboundSoundEntityPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientboundStopSoundPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientboundStoreCookiePacket;
@@ -103,6 +101,7 @@ import com.velocitypowered.proxy.protocol.packet.HeaderAndFooterPacket;
 import com.velocitypowered.proxy.protocol.packet.KeepAlivePacket;
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import com.velocitypowered.proxy.protocol.packet.RemoveResourcePackPacket;
+import com.velocitypowered.proxy.protocol.packet.ServerboundCookieResponsePacket;
 import com.velocitypowered.proxy.protocol.packet.TransferPacket;
 import com.velocitypowered.proxy.protocol.packet.chat.ChatQueue;
 import com.velocitypowered.proxy.protocol.packet.chat.ComponentHolder;
@@ -192,6 +191,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
    * The actual Minecraft connection. This is actually a wrapper object around the Netty channel.
    */
   private final MinecraftConnection connection;
+  private final CookieRequestHandler cookieRequestHandler;
   private final @Nullable InetSocketAddress virtualHost;
   private final @Nullable String rawVirtualHost;
   private final HandshakeIntent handshakeIntent;
@@ -306,6 +306,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     this.server = server;
     this.profile = profile;
     this.connection = connection;
+    this.cookieRequestHandler = new CookieRequestHandler(server, this);
     this.virtualHost = virtualHost;
     this.rawVirtualHost = rawVirtualHost;
     this.handshakeIntent = handshakeIntent;
@@ -1718,15 +1719,17 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
         this.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_5),
         "Player version must be at least 1.20.5 to be able to retrieve cookies");
 
-    server.getEventManager().fire(new CookieRequestEvent(this, key))
-        .thenAcceptAsync(event -> {
-          if (event.getResult().isAllowed()) {
-            final Key resultedKey = event.getResult().getKey() == null
-                ? event.getOriginalKey() : event.getResult().getKey();
+    cookieRequestHandler.request(key, null);
+  }
 
-            connection.write(new ClientboundCookieRequestPacket(resultedKey));
-          }
-        }, connection.eventLoop());
+  /** Requests a backend cookie, retaining its origin across server and protocol state changes. */
+  public void requestCookie(Key key, MinecraftConnection backend) {
+    cookieRequestHandler.request(key, backend);
+  }
+
+  /** Handles cookie responses in both PLAY and CONFIGURATION. */
+  public void handleCookieResponse(ServerboundCookieResponsePacket packet) {
+    cookieRequestHandler.receive(packet);
   }
 
   @Override

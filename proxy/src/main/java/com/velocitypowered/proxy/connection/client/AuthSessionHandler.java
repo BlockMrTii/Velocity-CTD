@@ -23,7 +23,6 @@ import com.google.common.base.Preconditions;
 import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.connection.PostLoginEvent;
 import com.velocitypowered.api.event.permission.PermissionsSetupEvent;
-import com.velocitypowered.api.event.player.CookieReceiveEvent;
 import com.velocitypowered.api.event.player.GameProfileRequestEvent;
 import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
 import com.velocitypowered.api.network.HandshakeIntent;
@@ -295,18 +294,11 @@ public class AuthSessionHandler implements MinecraftSessionHandler {
       return true;
     }
 
-    server.getEventManager()
-        .fire(new CookieReceiveEvent(connectedPlayer, packet.getKey(), packet.getPayload()))
-        .thenAcceptAsync(event -> {
-          if (event.getResult().isAllowed()) {
-            // The received cookie must have been requested by a proxy plugin in login phase,
-            // because if a backend server requests a cookie in login phase, the client is already
-            // in config phase. Therefore, the only way, we receive a CookieResponsePacket from a
-            // client in login phase is when a proxy plugin requested a cookie in login phase.
-            throw new IllegalStateException(
-                "A cookie was requested by a proxy plugin in login phase but the response wasn't handled");
-          }
-        }, mcConnection.eventLoop());
+    if (connectedPlayer == null) {
+      mcConnection.close(true);
+      return true;
+    }
+    connectedPlayer.handleCookieResponse(packet);
 
     return true;
   }

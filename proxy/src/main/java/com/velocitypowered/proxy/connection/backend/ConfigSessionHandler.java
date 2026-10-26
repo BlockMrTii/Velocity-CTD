@@ -19,7 +19,6 @@ package com.velocitypowered.proxy.connection.backend;
 
 import com.velocitypowered.api.event.connection.PluginMessageEvent;
 import com.velocitypowered.api.event.connection.PreTransferEvent;
-import com.velocitypowered.api.event.player.CookieRequestEvent;
 import com.velocitypowered.api.event.player.CookieStoreEvent;
 import com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent;
 import com.velocitypowered.api.event.player.ServerResourcePackRemoveEvent;
@@ -46,6 +45,7 @@ import com.velocitypowered.proxy.protocol.packet.ClientboundStoreCookiePacket;
 import com.velocitypowered.proxy.protocol.packet.DisconnectPacket;
 import com.velocitypowered.proxy.protocol.packet.JoinGamePacket;
 import com.velocitypowered.proxy.protocol.packet.KeepAlivePacket;
+import com.velocitypowered.proxy.protocol.packet.PingIdentifyPacket;
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import com.velocitypowered.proxy.protocol.packet.RemoveResourcePackPacket;
 import com.velocitypowered.proxy.protocol.packet.ResourcePackRequestPacket;
@@ -214,6 +214,16 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
     serverConn.getPendingPings().put(packet.getRandomId(), System.nanoTime());
     serverConn.getPlayer().getConnection().write(packet);
     return true;
+  }
+
+  @Override
+  public boolean handle(PingIdentifyPacket packet) {
+    if (silent) {
+      // No client configuration phase is running; answer the configuring backend ourselves.
+      serverConn.ensureConnected().write(packet);
+      return true;
+    }
+    return false;
   }
 
   @Override
@@ -455,16 +465,7 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(ClientboundCookieRequestPacket packet) {
-    server.getEventManager().fire(new CookieRequestEvent(serverConn.getPlayer(), packet.getKey()))
-        .thenAcceptAsync(event -> {
-          if (event.getResult().isAllowed()) {
-            final Key resultedKey = event.getResult().getKey() == null
-                ? event.getOriginalKey() : event.getResult().getKey();
-
-            serverConn.getPlayer().getConnection().write(new ClientboundCookieRequestPacket(resultedKey));
-          }
-        }, serverConn.ensureConnected().eventLoop());
-
+    serverConn.getPlayer().requestCookie(packet.getKey(), serverConn.ensureConnected());
     return true;
   }
 
@@ -546,6 +547,10 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public void handleUnknown(ByteBuf buf) {
+    if (silent) {
+      // Raw packet IDs belong to CONFIGURATION and mean something else to a client in PLAY.
+      return;
+    }
     serverConn.getPlayer().getConnection().write(buf.retain());
   }
 
