@@ -25,6 +25,8 @@ import com.velocitypowered.proxy.protocol.StateRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
+import java.util.function.Consumer;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * Encodes {@link MinecraftPacket} instances.
@@ -33,6 +35,7 @@ public class MinecraftEncoder extends MessageToByteEncoder<MinecraftPacket> {
 
   private final ProtocolUtils.Direction direction;
   private StateRegistry state;
+  private @Nullable Consumer<ByteBuf> packetObserver;
   private StateRegistry.PacketRegistry.ProtocolRegistry registry;
 
   /**
@@ -49,9 +52,30 @@ public class MinecraftEncoder extends MessageToByteEncoder<MinecraftPacket> {
 
   @Override
   protected void encode(ChannelHandlerContext ctx, MinecraftPacket msg, ByteBuf out) {
+    int start = out.writerIndex();
     int packetId = this.registry.getPacketId(msg);
     ProtocolUtils.writeVarInt(out, packetId);
     msg.encode(out, direction, registry.version);
+    if (packetObserver != null && state == StateRegistry.PLAY) {
+      packetObserver.accept(out.duplicate().readerIndex(start));
+    }
+  }
+
+  /**
+   * Observes packets encoded by synchronous writes on this channel's event loop. Raw buffers bypass
+   * this encoder and must be observed by the caller. The observer must not modify or retain buffers.
+   *
+   * @param observer receives each encoded PLAY packet including its ID
+   * @param writes the writes to observe
+   */
+  public void observeEncodedPackets(Consumer<ByteBuf> observer, Runnable writes) {
+    Consumer<ByteBuf> previous = packetObserver;
+    packetObserver = observer;
+    try {
+      writes.run();
+    } finally {
+      packetObserver = previous;
+    }
   }
 
   @Override
