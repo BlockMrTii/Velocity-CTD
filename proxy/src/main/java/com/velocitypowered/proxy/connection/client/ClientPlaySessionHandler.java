@@ -43,6 +43,7 @@ import com.velocitypowered.proxy.connection.registry.DimensionInfo;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
+import com.velocitypowered.proxy.protocol.netty.MinecraftEncoder;
 import com.velocitypowered.proxy.protocol.packet.BossBarPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientSettingsPacket;
 import com.velocitypowered.proxy.protocol.packet.JoinGamePacket;
@@ -187,6 +188,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
 
   @Override
   public void activated() {
+    trackClientWrites();
     configSwitchFuture = new CompletableFuture<>();
     Collection<ChannelIdentifier> channels =
         server.getChannelRegistrar().getChannelsForProtocol(player.getProtocolVersion());
@@ -658,6 +660,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
    * @param destination the new server we are connecting to
    */
   public void handleBackendJoinGame(JoinGamePacket joinGame, VelocityServerConnection destination) {
+    trackClientWrites();
     final MinecraftConnection serverMc = destination.ensureConnected();
     // If the client is already spawned here, this is a switch that skipped the config state, so
     // nothing has cleared the client's state (e.g. boss bars) for us.
@@ -759,6 +762,15 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       return null;
     }
     return info.getLevelName() + " (dimension type " + dimensionType + ")";
+  }
+
+  private void trackClientWrites() {
+    MinecraftEncoder encoder = player.getConnection().getChannel().pipeline()
+        .get(MinecraftEncoder.class);
+    if (encoder != null) {
+      encoder.setPlayPacketObserver(ClientWorldTracker.supports(player.getProtocolVersion())
+          ? worldTracker::onClientbound : null);
+    }
   }
 
   public ClientWorldTracker getWorldTracker() {

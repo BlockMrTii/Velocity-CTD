@@ -36,9 +36,12 @@ import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.player.bossbar.BossBarManager;
 import com.velocitypowered.proxy.connection.registry.DimensionInfo;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
+import com.velocitypowered.proxy.protocol.StateRegistry;
+import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
 import com.velocitypowered.proxy.protocol.netty.MinecraftEncoder;
 import com.velocitypowered.proxy.protocol.packet.JoinGamePacket;
 import com.velocitypowered.proxy.protocol.packet.chat.ComponentHolder;
+import com.velocitypowered.proxy.server.VelocityRegisteredServer;
 import com.velocitypowered.proxy.tablist.InternalTabList;
 import com.velocitypowered.proxy.util.VelocityChannelRegistrar;
 import io.netty.buffer.ByteBuf;
@@ -92,17 +95,27 @@ class ScoreboardRoundTripTest {
   private MinecraftConnection connection(boolean clientbound) {
     MinecraftConnection connection = mock(MinecraftConnection.class);
     when(connection.getProtocolVersion()).thenReturn(VERSION);
-    EmbeddedChannel channel = new EmbeddedChannel(new MinecraftEncoder(
-        clientbound ? ProtocolUtils.Direction.CLIENTBOUND : ProtocolUtils.Direction.SERVERBOUND));
+    MinecraftEncoder encoder = new MinecraftEncoder(
+        clientbound ? ProtocolUtils.Direction.CLIENTBOUND : ProtocolUtils.Direction.SERVERBOUND);
+    encoder.setState(StateRegistry.PLAY);
+    encoder.setProtocolVersion(VERSION);
+    MinecraftDecoder decoder = new MinecraftDecoder(ProtocolUtils.Direction.CLIENTBOUND);
+    decoder.setState(StateRegistry.PLAY);
+    decoder.setProtocolVersion(VERSION);
+    EmbeddedChannel channel = new EmbeddedChannel(encoder, decoder);
     channels.add(channel);
     when(connection.getChannel()).thenReturn(channel);
     doAnswer(call -> {
       Object message = call.getArgument(0);
-      if (message instanceof ByteBuf buf) {
-        forwarded.add(buf);
-        if (clientbound) {
-          applyToClient(buf.duplicate());
+      if (clientbound && message instanceof ByteBuf) {
+        channel.writeOutbound(message);
+        ByteBuf frame;
+        while ((frame = channel.readOutbound()) != null) {
+          forwarded.add(frame);
+          applyToClient(frame.duplicate());
         }
+      } else if (message instanceof ByteBuf buf) {
+        forwarded.add(buf);
       }
       return null;
     }).when(connection).delayedWrite(any());
@@ -128,6 +141,7 @@ class ScoreboardRoundTripTest {
     VelocityServerConnection backend = mock(VelocityServerConnection.class);
     MinecraftConnection connection = connection(false);
     when(backend.getPlayer()).thenReturn(player);
+    when(backend.getServer()).thenReturn(mock(VelocityRegisteredServer.class));
     when(backend.ensureConnected()).thenReturn(connection);
     when(backend.getConnection()).thenReturn(connection);
     return backend;
@@ -187,6 +201,50 @@ class ScoreboardRoundTripTest {
       assertEquals(Set.of("northduels"), objectives);
       assertEquals(Set.of("duels-team"), teams);
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void objectivesSentDirectlyToClientAreCleanedOnEverySwitch(boolean seamless) throws Exception {
+    when(config.isSeamlessSwitch()).thenReturn(seamless);
+    play.handleBackendJoinGame(joinGame(), backend());
+    // A proxy plugin can write these without passing through the backend decoder or transition.
+    for (int repeat = 0; repeat < 3; repeat++) {
+      client.delayedWrite(scoreboard(0x6C, "northduels", 0));
+      client.delayedWrite(scoreboard(0x6F, "duels-team", 0));
+      client.delayedWrite(scoreboard(0x6C, "second-objective", 0));
+      client.delayedWrite(scoreboard(0x6F, "second-team", 0));
+      enter("northlobby", "lobby-team");
+      assertEquals(Set.of("northlobby"), objectives);
+      assertEquals(Set.of("lobby-team"), teams);
+      play.handleBackendJoinGame(joinGame(), backend());
+      assertTrue(objectives.isEmpty());
+      assertTrue(teams.isEmpty());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void discardedPacketsFromAnObsoleteBackendCannotEraseClientState(boolean seamless)
+      throws Exception {
+    when(config.isSeamlessSwitch()).thenReturn(seamless);
+    enter("northduels", "duels-team");
+    VelocityServerConnection oldBackend = backend();
+    BackendPlaySessionHandler handler = new BackendPlaySessionHandler(server, oldBackend);
+    handler.activated();
+    EmbeddedChannel channel = (EmbeddedChannel) oldBackend.ensureConnected().getChannel();
+    // Decoding precedes beforeHandle(), which discards all packets from obsolete connections.
+    channel.writeInbound(scoreboard(0x6C, "northduels", 1));
+    channel.writeInbound(scoreboard(0x6F, "duels-team", 1));
+    assertTrue(handler.beforeHandle());
+    ByteBuf discarded;
+    while ((discarded = channel.readInbound()) != null) {
+      discarded.release();
+    }
+    enter("northlobby", "lobby-team");
+    assertEquals(Set.of("northlobby"), objectives);
+    assertEquals(Set.of("lobby-team"), teams);
+    enter("northduels", "duels-team");
   }
 
   @AfterEach

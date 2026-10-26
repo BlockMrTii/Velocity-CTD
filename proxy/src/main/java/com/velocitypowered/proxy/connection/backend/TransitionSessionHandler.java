@@ -29,14 +29,12 @@ import com.velocitypowered.proxy.connection.ConnectionTypes;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.connection.client.ClientPlaySessionHandler;
-import com.velocitypowered.proxy.connection.client.ClientWorldTracker;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults.Impl;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
-import com.velocitypowered.proxy.protocol.netty.MinecraftEncoder;
 import com.velocitypowered.proxy.protocol.packet.DisconnectPacket;
 import com.velocitypowered.proxy.protocol.packet.JoinGamePacket;
 import com.velocitypowered.proxy.protocol.packet.KeepAlivePacket;
@@ -47,10 +45,8 @@ import io.netty.util.ReferenceCountUtil;
 import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * A special session handler that catches "last minute" disconnects.
@@ -271,43 +267,12 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
       return;
     }
 
-    final ConnectedPlayer player = serverConn.getPlayer();
-    final MinecraftConnection clientConn = player.getConnection();
-    final Consumer<ByteBuf> observer =
-        ClientWorldTracker.supports(player.getProtocolVersion())
-            && clientConn.getActiveSessionHandler() instanceof ClientPlaySessionHandler play
-            ? play.getWorldTracker()::onClientbound : null;
-
-    // These packets were decoded before BackendPlaySessionHandler installed its observer. Track
-    // them only now, after JoinGame has cleared the previous server's state. Observe registered
-    // packet types during their real client encoding, without encoding them a second time.
-    if (observer != null) {
-      MinecraftEncoder encoder = clientConn.getChannel().pipeline().get(MinecraftEncoder.class);
-      if (encoder != null) {
-        encoder.observeEncodedPackets(observer, () -> forwardDeferredPackets(clientConn, observer));
-      } else {
-        forwardDeferredPackets(clientConn, observer);
-      }
-    } else {
-      forwardDeferredPackets(clientConn, null);
-    }
-    clientConn.flush();
-  }
-
-  private void forwardDeferredPackets(MinecraftConnection clientConn,
-      @Nullable Consumer<ByteBuf> observer) {
+    final MinecraftConnection clientConn = serverConn.getPlayer().getConnection();
     Object packet;
     while ((packet = deferredPackets.poll()) != null) {
-      if (observer != null && packet instanceof ByteBuf raw) {
-        try {
-          observer.accept(raw);
-        } catch (RuntimeException exception) {
-          ReferenceCountUtil.release(packet);
-          throw exception;
-        }
-      }
       clientConn.delayedWrite(packet);
     }
+    clientConn.flush();
   }
 
   private void releaseDeferredPackets() {

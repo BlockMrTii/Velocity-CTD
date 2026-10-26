@@ -94,7 +94,7 @@ public final class ClientWorldTracker {
   }
 
   /**
-   * Inspects a clientbound packet that Velocity does not decode itself. The sets may contain IDs
+   * Inspects a PLAY frame written to the client, including encoded and raw packets. Sets may contain IDs
    * that are already gone on the client (e.g. after a dimension change); removing those again on
    * a switch is harmless.
    *
@@ -152,7 +152,7 @@ public final class ClientWorldTracker {
       client.delayedWrite(buf);
       entities.clear();
     }
-    playerEffects.forEach(effect -> {
+    new IntOpenHashSet(playerEffects).forEach(effect -> {
       ByteBuf buf = packet(REMOVE_MOB_EFFECT);
       ProtocolUtils.writeVarInt(buf, playerEntityId);
       ProtocolUtils.writeVarInt(buf, effect);
@@ -162,7 +162,8 @@ public final class ClientWorldTracker {
     // Forget the old terrain right away, so the new server's chunks load into an empty level
     // instead of visibly replacing the old ones.
     if (forgetChunks) {
-      chunks.forEach(pos -> client.delayedWrite(packet(FORGET_LEVEL_CHUNK).writeLong(pos)));
+      new LongOpenHashSet(chunks).forEach(pos ->
+          client.delayedWrite(packet(FORGET_LEVEL_CHUNK).writeLong(pos)));
     }
     chunks.clear();
     clearScoreboard(client);
@@ -198,10 +199,12 @@ public final class ClientWorldTracker {
    * @param client the client connection
    */
   void clearScoreboard(MinecraftConnection client) {
-    objectives.forEach(name -> client.delayedWrite(removal(SET_OBJECTIVE, name)));
+    Set<String> oldObjectives = new HashSet<>(objectives);
+    Set<String> oldTeams = new HashSet<>(teams);
     objectives.clear();
-    teams.forEach(name -> client.delayedWrite(removal(SET_PLAYER_TEAM, name)));
     teams.clear();
+    oldObjectives.forEach(name -> client.delayedWrite(removal(SET_OBJECTIVE, name)));
+    oldTeams.forEach(name -> client.delayedWrite(removal(SET_PLAYER_TEAM, name)));
   }
 
   private static void track(Set<String> names, String name, byte method) {

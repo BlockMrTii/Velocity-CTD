@@ -18,7 +18,6 @@
 package com.velocitypowered.proxy.protocol;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
@@ -59,11 +58,12 @@ class MinecraftEncoderObservationTest {
     ObjectivePacket packet = new ObjectivePacket();
     List<String> seen = new ArrayList<>();
     try {
-      encoder.observeEncodedPackets(frame -> {
+      encoder.setPlayPacketObserver(frame -> {
         assertEquals(0x6C, ProtocolUtils.readVarInt(frame));
         seen.add(ProtocolUtils.readString(frame));
         assertEquals(0, frame.readUnsignedByte());
-      }, () -> channel.writeOutbound(packet));
+      });
+      channel.writeOutbound(packet);
       assertEquals(1, packet.encodes, "observation must use the real encoding");
       assertEquals(List.of("northduels"), seen);
       ByteBuf forwarded = channel.readOutbound();
@@ -75,38 +75,38 @@ class MinecraftEncoderObservationTest {
         forwarded.release();
       }
       channel.writeOutbound(new ObjectivePacket());
-      assertEquals(1, seen.size(), "normal later writes must not be observed twice");
+      assertEquals(2, seen.size(), "later PLAY writes must also be tracked");
     } finally {
       channel.finishAndReleaseAll();
     }
   }
 
   @Test
-  void rawPacketsRemainForTheCallersObserverToHandleExactlyOnce() throws Exception {
+  void rawPacketsAreObservedExactlyOnce() throws Exception {
     MinecraftEncoder encoder = encoder();
     EmbeddedChannel channel = new EmbeddedChannel(encoder);
     List<String> seen = new ArrayList<>();
     try {
-      encoder.observeEncodedPackets(frame -> seen.add("encoded"),
-          () -> channel.writeOutbound(Unpooled.buffer().writeByte(0x6C)));
-      assertEquals(List.of(), seen);
+      encoder.setPlayPacketObserver(frame -> seen.add("raw"));
+      channel.writeOutbound(Unpooled.buffer().writeByte(0x6C));
+      assertEquals(List.of("raw"), seen);
     } finally {
       channel.finishAndReleaseAll();
     }
   }
 
   @Test
-  void observerIsRestoredWhenTheWriteScopeFails() throws Exception {
+  void observerCanBeDisabledWhenTheClientHandlerChanges() throws Exception {
     MinecraftEncoder encoder = encoder();
     EmbeddedChannel channel = new EmbeddedChannel(encoder);
     List<String> seen = new ArrayList<>();
     try {
-      assertThrows(IllegalStateException.class,
-          () -> encoder.observeEncodedPackets(frame -> seen.add("unexpected"), () -> {
-            throw new IllegalStateException("aborted transition");
-          }));
+      encoder.setPlayPacketObserver(frame -> seen.add("tracked"));
       channel.writeOutbound(new ObjectivePacket());
-      assertEquals(List.of(), seen);
+      encoder.setPlayPacketObserver(null);
+      channel.writeOutbound(new ObjectivePacket());
+      channel.writeOutbound(Unpooled.buffer().writeByte(0x6C));
+      assertEquals(List.of("tracked"), seen);
     } finally {
       channel.finishAndReleaseAll();
     }
@@ -120,8 +120,9 @@ class MinecraftEncoderObservationTest {
     EmbeddedChannel channel = new EmbeddedChannel(encoder);
     List<String> seen = new ArrayList<>();
     try {
-      encoder.observeEncodedPackets(frame -> seen.add("unexpected"),
-          () -> channel.writeOutbound(new ClientboundCookieRequestPacket(Key.key("test", "cookie"))));
+      encoder.setPlayPacketObserver(frame -> seen.add("unexpected"));
+      channel.writeOutbound(new ClientboundCookieRequestPacket(Key.key("test", "cookie")));
+      channel.writeOutbound(Unpooled.buffer().writeByte(0x6C));
       assertEquals(List.of(), seen);
     } finally {
       channel.finishAndReleaseAll();
