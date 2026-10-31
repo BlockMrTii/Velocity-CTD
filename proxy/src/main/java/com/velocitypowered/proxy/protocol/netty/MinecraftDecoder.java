@@ -29,6 +29,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.codec.CorruptedFrameException;
+import io.netty.util.ReferenceCountUtil;
 import java.util.function.Consumer;
 import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.Nullable;
@@ -109,6 +110,7 @@ public class MinecraftDecoder extends ChannelInboundHandlerAdapter {
       }
 
       if (buf.isReadable()) {
+        ReferenceCountUtil.release(packet);
         throw handleOverflow(packet, buf.readerIndex(), buf.writerIndex());
       }
       if (packet instanceof StartUpdatePacket && direction == ProtocolUtils.Direction.CLIENTBOUND) {
